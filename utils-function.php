@@ -194,30 +194,144 @@ function render_woo_upgrade_button($atts) {
 }
 add_shortcode('woo_upgrade_button', 'render_woo_upgrade_button');
 
-add_action( 'woocommerce_payment_complete', 'save_single_package_on_checkout', 10, 1 );
-function save_single_package_on_checkout( $order_id ) {
-    $order = wc_get_order( $order_id );
-    $user_id = $order->get_user_id();
+// add_action( 'woocommerce_payment_complete', 'save_single_package_on_checkout', 10, 1 );
+// function save_single_package_on_checkout( $order_id ) {
+//     $order = wc_get_order( $order_id );
+//     $user_id = $order->get_user_id();
 
-    // Nếu thanh toán dạng khách vãng lai (chưa đăng nhập) thì bỏ qua
-    if ( ! $user_id ) {
-        return;
-    }
+//     // Nếu thanh toán dạng khách vãng lai (chưa đăng nhập) thì bỏ qua
+//     if ( ! $user_id ) {
+//         return;
+//     }
 
-    // Lấy sản phẩm trong đơn hàng
-    $items = $order->get_items();
-    if ( empty( $items ) ) {
-        return;
-    }
+//     // Lấy sản phẩm trong đơn hàng
+//     $items = $order->get_items();
+//     if ( empty( $items ) ) {
+//         return;
+//     }
 
-    $item = reset( $items );
-    $product_name = $item->get_name(); // Lấy tên gói sản phẩm vừa mua
+//     $item = reset( $items );
+//     $product_name = $item->get_name(); // Lấy tên gói sản phẩm vừa mua
 
-    // Lấy danh sách các gói hiện tại của user (dùng tham số false để lưu thành nhiều dòng riêng biệt)
-    $existing_packages = get_user_meta( $user_id, 'user_purchased_package', false );
+//     // Lấy danh sách các gói hiện tại của user (dùng tham số false để lưu thành nhiều dòng riêng biệt)
+//     $existing_packages = get_user_meta( $user_id, 'user_purchased_package', false );
 
-    // Kiểm tra nếu chưa có gói này trong DB thì tiến hành add thêm dòng mới
-    if ( ! in_array( $product_name, $existing_packages ) ) {
-        add_user_meta( $user_id, 'user_purchased_package', $product_name );
-    }
+//     // Kiểm tra nếu chưa có gói này trong DB thì tiến hành add thêm dòng mới
+//     if ( ! in_array( $product_name, $existing_packages ) ) {
+//         add_user_meta( $user_id, 'user_purchased_package', $product_name );
+//     }
+// }
+
+function render_region_inline_grid() {
+    // Lấy danh sách các tỉnh thành động từ Database
+    $regions = get_terms( array(
+        'taxonomy'   => 'site_region',
+        'hide_empty' => false,
+    ) );
+
+    // Lấy region đang được chọn hiện tại (ưu tiên từ URL ?region=...)
+    $current_region = isset( $_GET['region'] ) ? sanitize_text_field( $_GET['region'] ) : '';
+
+    ob_start();
+    ?>
+    <div class="region-inline-wrapper">
+        <div class="region-inline-grid">
+            <?php
+            if ( ! empty( $regions ) && ! is_wp_error( $regions ) ) {
+                foreach ( $regions as $region ) {
+                    $region_code = get_term_meta( $region->term_id, 'region_code', true );
+                    if ( empty( $region_code ) ) {
+                        $region_code = $region->slug;
+                    }
+                    
+                    // Kiểm tra xem nút này có phải là bang đang được chọn không
+                    $is_active = ( $current_region === $region_code ) ? 'is-active' : '';
+
+                    echo '<a href="/drivers-license-class/?region=' . esc_attr( $region_code ) . '" class="region-item-btn ' . esc_attr( $is_active ) . '">';
+                    echo '<span class="region-name">' . esc_html( $region->name ) . '</span>';
+                    echo '</a>';
+                }
+            }
+            ?>
+        </div>
+    </div>
+
+    <style>
+        .region-inline-wrapper {
+            background: #ffffff;
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(0, 0, 0, 0.04);
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Lưới các nút chia thành 4 cột trên một hàng */
+        .region-inline-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .region-item-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 12px 10px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            text-decoration: none;
+            color: #1e293b;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.25s ease;
+        }
+
+        .region-item-btn:hover {
+            background: #0f172a;
+            color: #ffffff;
+            border-color: #0f172a;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+        }
+
+        /* Trạng thái khi bang đó ĐÃ ĐƯỢC CHỌN (Active) */
+        .region-item-btn.is-active {
+            background: #0f172a;
+            color: #ffffff;
+            border-color: #0f172a;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
+        }
+
+        .region-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Responsive: Màn hình trung bình thì 2 hoặc 3 cột, màn hình nhỏ co về 1 cột */
+        @media (max-width: 1200px) {
+            .region-inline-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .region-inline-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 480px) {
+            .region-inline-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    <?php
+    return ob_get_clean();
 }
+add_shortcode( 'region_inline_grid', 'render_region_inline_grid' );

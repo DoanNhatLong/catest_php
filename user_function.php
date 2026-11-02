@@ -41,7 +41,7 @@ function save_user_selected_province() {
         update_user_meta( $user_id, 'user_province', $province );
         
         // Lưu xong thì đưa người dùng quay lại trang chủ
-        wp_safe_redirect( home_url( '/' ) );
+        wp_safe_redirect( home_url( '/memberhome' ) );
         exit;
     }
 }
@@ -729,6 +729,7 @@ function render_member_filtered_quizzes() {
 
 add_shortcode('snnj_user_profile', 'snnj_render_user_profile_shortcode');
 function snnj_render_user_profile_shortcode() {
+    $rest_nonce = wp_create_nonce('wp_rest');
     ob_start();
     ?>
     <div id="snnj-profile-wrapper" class="snnj-profile-card">
@@ -893,9 +894,50 @@ function snnj_render_user_profile_shortcode() {
     </style>
 
     <script>
+    // Hàm hiển thị Toast Popup (chỉ dùng cho nút Save)
+    window.snnjShowToast = function(message, type = 'success') {
+        let toast = document.getElementById('snnj-global-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'snnj-global-toast';
+            document.body.appendChild(toast);
+            
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 30px;
+                right: 30px;
+                padding: 14px 24px;
+                border-radius: 12px;
+                color: #fff;
+                font-size: 14px;
+                font-weight: 600;
+                z-index: 99999;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+                transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                transform: translateY(100px);
+                opacity: 0;
+                font-family: inherit;
+            `;
+        }
+
+        toast.style.background = type === 'success' ? '#0369a1' : '#ef4444';
+        toast.textContent = message;
+        
+        setTimeout(() => {
+            toast.style.transform = 'translateY(0)';
+            toast.style.opacity = '1';
+        }, 10);
+
+        setTimeout(() => {
+            toast.style.transform = 'translateY(100px)';
+            toast.style.opacity = '0';
+        }, 3000);
+    };
+
     document.addEventListener("DOMContentLoaded", function() {
         const container = document.getElementById("snnj-profile-wrapper");
         const rawData = sessionStorage.getItem("snnj_user_info");
+        const restNonce = "<?php echo esc_js($rest_nonce); ?>";
 
         if (!rawData) {
             container.innerHTML = "<p style='color: #ef4444; text-align:center;'>Session data not found.</p>";
@@ -920,7 +962,7 @@ function snnj_render_user_profile_shortcode() {
                 <div class="snnj-profile-header">
                     <div class="snnj-avatar">${initials}</div>
                     <div class="snnj-user-meta">
-                        <h2>${fullName}</h2>
+                        <h2 id="snnj-display-name">${fullName}</h2>
                         <p>${user.email || ""}</p>
                     </div>
                 </div>
@@ -928,11 +970,11 @@ function snnj_render_user_profile_shortcode() {
                 <div class="snnj-row">
                     <div class="snnj-form-group">
                         <label>First Name</label>
-                        <input type="text" class="snnj-form-control" value="${user.first_name || ""}">
+                        <input type="text" id="snnj-first-name" class="snnj-form-control" value="${user.first_name || ""}">
                     </div>
                     <div class="snnj-form-group">
                         <label>Last Name</label>
-                        <input type="text" class="snnj-form-control" value="${user.last_name || ""}">
+                        <input type="text" id="snnj-last-name" class="snnj-form-control" value="${user.last_name || ""}">
                     </div>
                 </div>
 
@@ -947,18 +989,123 @@ function snnj_render_user_profile_shortcode() {
                 </div>
 
                 <div class="snnj-actions">
-                    <button type="button" class="snnj-btn snnj-btn-secondary">Discard Changes</button>
-                    <button type="button" class="snnj-btn snnj-btn-primary">Save</button>
+                    <button type="button" id="snnj-btn-discard" class="snnj-btn snnj-btn-secondary">Discard Changes</button>
+                    <button type="button" id="snnj-btn-save" class="snnj-btn snnj-btn-primary">Save</button>
                 </div>
             `;
 
-        } catch (e) {
-            container.innerHTML = "<p style='color: #ef4444; text-align:center;'>Error parsing user session data.</p>";
+            const btnDiscard = document.getElementById("snnj-btn-discard");
+            const btnSave = document.getElementById("snnj-btn-save");
+            const inputFirstName = document.getElementById("snnj-first-name");
+            const inputLastName = document.getElementById("snnj-last-name");
+            const displayName = document.getElementById("snnj-display-name");
+            const avatarBox = container.querySelector(".snnj-avatar");
+
+            // Nút Discard khôi phục lại giá trị cũ mà không gọi popup
+            btnDiscard.addEventListener("click", function() {
+                inputFirstName.value = user.first_name || "";
+                inputLastName.value = user.last_name || "";
+            });
+
+            // Nút Save gọi API và hiển thị Toast Popup
+btnSave.addEventListener("click", function() {
+    const newFirstName = inputFirstName.value.trim();
+    const newLastName = inputLastName.value.trim();
+
+    // Regex kiểm tra chỉ chứa chữ cái (có dấu Tiếng Việt) và khoảng trắng, độ dài từ 1 đến 30 ký tự
+    const nameRegex = /^[A-Za-zÀ-ỹ\s]{1,30}$/;
+
+    if (!nameRegex.test(newFirstName) || !nameRegex.test(newLastName)) {
+        window.snnjShowToast("Tên đổi không hợp lệ", "error");
+        return;
+    }
+
+    btnSave.disabled = true;
+    btnSave.textContent = "Saving...";
+
+    fetch('/wp-json/snnj/v1/update-profile', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': restNonce
+        },
+        body: JSON.stringify({
+            first_name: newFirstName,
+            last_name: newLastName
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            user.first_name = newFirstName;
+            user.last_name = newLastName;
+            sessionStorage.setItem("snnj_user_info", JSON.stringify(user));
+
+            const newFull = (newFirstName || newLastName) ? `${newFirstName} ${newLastName}` : "User";
+            displayName.textContent = newFull;
+            avatarBox.textContent = ((newFirstName?.[0] || "") + (newLastName?.[0] || "")).toUpperCase() || "U";
+
+            window.snnjShowToast("Profile updated successfully!", "success");
+        } else {
+            window.snnjShowToast(data.message || "Tên đổi không hợp lệ", "error");
         }
+    })
+    .catch(error => {
+        window.snnjShowToast("Tên đổi không hợp lệ", "error");
+    })
+    .finally(() => {
+        btnSave.disabled = false;
+        btnSave.textContent = "Save";
     });
-    </script>
-    <?php
-    return ob_get_clean();
+});
+
+} catch (e) {
+    container.innerHTML = "<p style='color: #ef4444; text-align:center;'>Error parsing user session data.</p>";
+}
+});
+</script>
+<?php
+return ob_get_clean();
+}
+
+add_action('rest_api_init', function () {
+    register_rest_route('snnj/v1', '/update-profile', [
+        'methods' => 'POST',
+        'callback' => 'snnj_handle_update_profile',
+        'permission_callback' => function () {
+            return is_user_logged_in();
+        }
+    ]);
+});
+
+function snnj_handle_update_profile($request) {$user_id = get_current_user_id();
+    
+    if (!$user_id) {
+        return new WP_REST_Response(['success' => false, 'message' => 'Unauthorized.'], 401);
+    }
+
+    $params =$request->get_json_params();
+    $first_name = sanitize_text_field($params['first_name'] ?? '');
+    $last_name = sanitize_text_field($params['last_name'] ?? '');
+
+    // Validate chặt chẽ phía Server
+    $pattern = '/^[A-Za-zÀ-ỹ\s]{1,30}$/u';
+    if (!preg_match($pattern,$first_name) || !preg_match($pattern,$last_name)) {
+        return new WP_REST_Response(['success' => false, 'message' => 'Tên đổi không hợp lệ'], 400);
+    }
+
+    $current_first = get_user_meta($user_id, 'first_name', true);
+    $current_last = get_user_meta($user_id, 'last_name', true);
+
+    if ($current_first !==$first_name) {
+        update_user_meta($user_id, 'first_name',$first_name);
+    }
+
+    if ($current_last !==$last_name) {
+        update_user_meta($user_id, 'last_name',$last_name);
+    }
+
+    return new WP_REST_Response(['success' => true, 'message' => 'Updated successfully.'], 200);
 }
 
 add_shortcode( 'member_dashboard_quizzes', 'render_member_dashboard_quizzes' );
@@ -973,43 +1120,86 @@ function render_member_dashboard_quizzes() {
     $province = strtoupper( trim( $province ) );
 
     // ==========================================
-    // 1. ÉP PHẲNG VÀ LÀM SẠCH DATA GÓI MUA CHỐNG LỖI
+    // 1. LÀM SẠCH VÀ CHỌN GÓI CÓ THỜI GIAN XA NHẤT (LỌC BỎ GÓI CŨ)
     // ==========================================
     $raw_packages = get_user_meta( $current_user_id, 'user_purchased_package', false );
-    $purchased_packages = array();
-    
+    $today = date( 'Y-m-d' ); // Ngày hiện tại chuẩn YYYY-MM-DD
+
+    // Mảng lưu ngày hết hạn xa nhất cho từng loại gói
+    $max_expiry = array(
+        'knowledge'  => '',
+        'commercial' => '',
+        'motorcycle' => ''
+    );
+
     if ( ! empty( $raw_packages ) ) {
         foreach ( $raw_packages as $pkg ) {
-            if ( is_array( $pkg ) ) {
-                $purchased_packages = array_merge( $purchased_packages, $pkg );
+            $pkg_string = is_array( $pkg ) ? implode( ' ', $pkg ) : $pkg;
+            
+            // Tách chuỗi để lấy ngày ở cuối (10 ký tự cuối: YYYY-MM-DD)
+            if ( preg_match( '/(\d{4}-\d{2}-\d{2})$/', trim( $pkg_string ), $matches ) ) {
+                $expiry_date  = $matches[1];
+                $package_name = trim( str_replace( ' - ' . $expiry_date, '', $pkg_string ) );
             } else {
-                $split = explode( ',', $pkg );
-                foreach ( $split as $s ) {
-                    $purchased_packages[] = trim( $s );
+                $expiry_date  = '2099-12-31'; // Mặc định vĩnh viễn nếu không có ngày
+                $package_name = $pkg_string;
+            }
+
+            // Nếu gói đã hết hạn so với hôm nay thì bỏ qua
+            if ( $expiry_date < $today ) {
+                continue;
+            }
+
+            $p_lower = strtolower( $package_name );
+
+            // So sánh và chỉ giữ lại ngày hết hạn xa nhất (mới nhất) cho từng loại
+            if ( strpos( $p_lower, 'knowledge' ) !== false ) {
+                if ( empty( $max_expiry['knowledge'] ) || $expiry_date > $max_expiry['knowledge'] ) {
+                    $max_expiry['knowledge'] = $expiry_date;
+                }
+            }
+            if ( strpos( $p_lower, 'commercial' ) !== false ) {
+                if ( empty( $max_expiry['commercial'] ) || $expiry_date > $max_expiry['commercial'] ) {
+                    $max_expiry['commercial'] = $expiry_date;
+                }
+            }
+            if ( strpos( $p_lower, 'motorcycle' ) !== false ) {
+                if ( empty( $max_expiry['motorcycle'] ) || $expiry_date > $max_expiry['motorcycle'] ) {
+                    $max_expiry['motorcycle'] = $expiry_date;
                 }
             }
         }
     }
-    
-    // ==========================================
-    // 2. TẠO CỜ KIỂM TRA QUYỀN (TRUE / FALSE)
-    // ==========================================
-    $has_knowledge  = false;
-    $has_commercial = false;
-    $has_motorcycle = false;
 
-    foreach ( $purchased_packages as $p ) {
-        $p_lower = strtolower( $p );
-        if ( strpos( $p_lower, 'knowledge' ) !== false ) {
-            $has_knowledge = true;
+    // ==========================================
+    // 2. TẠO CỜ KIỂM TRA QUYỀN VÀ TÍNH SỐ NGÀY CÒN LẠI (DAYS LEFT)
+    // ==========================================
+    $has_knowledge  = ! empty( $max_expiry['knowledge'] );
+    $has_commercial = ! empty( $max_expiry['commercial'] );
+    $has_motorcycle = ! empty( $max_expiry['motorcycle'] );
+
+    // Hàm phụ trợ để tính và format thời gian hiển thị (Days left / Lifetime)
+    $get_package_badge = function( $expiry_date ) use ( $today ) {
+        if ( empty( $expiry_date ) ) return '';
+        
+        $datetime1 = new DateTime( $today );
+        $datetime2 = new DateTime( $expiry_date );
+        $interval  = $datetime1->diff( $datetime2 );
+        $days_left = (int) $interval->format( '%r%a' );
+
+        if ( $days_left > 18000 ) {
+            return '<span style="color: #2b6cb0; font-weight: 600; font-size: 13px; margin-left: 8px;">(Lifetime)</span>';
+        } elseif ( $days_left >= 0 ) {
+            return '<span style="color: #e53e3e; font-weight: 600; font-size: 13px; margin-left: 8px;">(' . $days_left . ' days left)</span>';
+        } else {
+            return '<span style="color: #a0aec0; font-weight: 600; font-size: 13px; margin-left: 8px;">(Expired)</span>';
         }
-        if ( strpos( $p_lower, 'commercial' ) !== false ) {
-            $has_commercial = true;
-        }
-        if ( strpos( $p_lower, 'motorcycle' ) !== false ) {
-            $has_motorcycle = true;
-        }
-    }
+    };
+
+    // Tạo sẵn các chuỗi badge thời hạn cho từng gói để đưa ra giao diện
+    $badge_knowledge  = $has_knowledge ? $get_package_badge( $max_expiry['knowledge'] ) : '';
+    $badge_commercial = $has_commercial ? $get_package_badge( $max_expiry['commercial'] ) : '';
+    $badge_motorcycle = $has_motorcycle ? $get_package_badge( $max_expiry['motorcycle'] ) : '';
 
     // ==========================================
     // 3. QUERY DATABASE
@@ -1095,9 +1285,9 @@ function render_member_dashboard_quizzes() {
     }
 
     // ==========================================
-    // 5. HIỂN THỊ GIAO DIỆN HTML/JS (Giữ nguyên của bạn)
+    // 5. HIỂN THỊ GIAO DIỆN HTML/JS
     // ==========================================
-   $output = '<div class="member-dashboard-container" style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif;">';
+    $output = '<div class="member-dashboard-container" style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif;">';
     
     $output .= '<h2 style="font-size: 22px; font-weight: 700; color: #1a202c; margin-bottom: 15px;">Available Practice Tests</h2>';
     
@@ -1131,7 +1321,8 @@ function render_member_dashboard_quizzes() {
         $html = '<div class="quiz-section-group" data-category="' . esc_attr($cat_slug) . '" style="margin-bottom: 25px;">';
         
         $html .= '<div class="section-toggle-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; user-select: none; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #edf2f7;">';
-        $html .= '<h3 style="font-size: 16px; font-weight: 600; color: #2d3748; margin: 0;">' . esc_html($title_section) . '</h3>';
+        // Ở đây cho phép hiển thị HTML của badge nằm trong tiêu đề
+        $html .= '<h3 style="font-size: 16px; font-weight: 600; color: #2d3748; margin: 0;">' . $title_section . '</h3>';
         $html .= '<span class="toggle-arrow" style="display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; background: #edf2f7; border-radius: 50%; font-size: 12px; color: #4a5568; transition: transform 0.2s; font-weight: bold;">▼</span>';
         $html .= '</div>';
 
@@ -1145,15 +1336,16 @@ function render_member_dashboard_quizzes() {
         return $html;
     };
 
-    $output .= $render_cards( 'Commercial Driver Package Tests', $commercial_tests, 'commercial' );
-    $output .= $render_cards( 'Knowledge Package Tests', $knowledge_tests, 'knowledge' );
+    // Nối thêm các biến badge ($badge_commercial, $badge_knowledge, $badge_motorcycle) vào tiêu đề
+    $output .= $render_cards( 'Commercial Driver Package Tests ' . $badge_commercial, $commercial_tests, 'commercial' );
+    $output .= $render_cards( 'Knowledge Package Tests ' . $badge_knowledge, $knowledge_tests, 'knowledge' );
     
     if ( ! empty( $motorcycle_tests ) ) {
-        $output .= $render_cards( 'Motorcycle Package Tests', $motorcycle_tests, 'motorcycle' );
+        $output .= $render_cards( 'Motorcycle Package Tests ' . $badge_motorcycle, $motorcycle_tests, 'motorcycle' );
     } elseif ( ! empty( $has_motorcycle ) ) {
         $output .= '<div class="quiz-section-group" data-category="motorcycle" style="margin-bottom: 25px;">';
         $output .= '<div class="section-toggle-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #edf2f7;">';
-        $output .= '<h3 style="font-size: 16px; font-weight: 600; color: #2d3748; margin: 0;">Motorcycle Package Tests</h3>';
+        $output .= '<h3 style="font-size: 16px; font-weight: 600; color: #2d3748; margin: 0;">Motorcycle Package Tests ' . $badge_motorcycle . '</h3>';
         $output .= '</div>';
         $output .= '<p style="color: #718096; font-size: 14px; padding: 10px;">No tests found matching this package yet.</p>';
         $output .= '</div>';
@@ -1173,7 +1365,6 @@ function render_member_dashboard_quizzes() {
     }
     .section-toggle-header:hover { background: #edf2f7 !important; }
 
-    /* Hiệu ứng hover cho card bài test */
     .member-exam-card {
         transition: all 0.25s ease-in-out !important;
     }
